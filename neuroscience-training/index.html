@@ -1,0 +1,902 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Prefrontal Lab | 前额叶实验室 6.0</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.0/dist/katex.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.0/dist/katex.min.js"></script>
+    <style>
+        body {
+            background-color: #f8fafc;
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            margin: 0;
+            overflow: hidden;
+            touch-action: manipulation;
+        }
+
+        #root {
+            height: 100vh;
+            width: 100vw;
+        }
+
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+
+        @keyframes pop-center {
+            from {
+                transform: scale(0.9);
+                opacity: 0;
+            }
+
+            to {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+
+        @keyframes flash-red {
+            0% {
+                background-color: rgba(239, 68, 68, 0.2);
+            }
+
+            100% {
+                background-color: transparent;
+            }
+        }
+
+        .animate-pop-center {
+            animation: pop-center 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        .arena-flash {
+            animation: flash-red 0.4s ease-out;
+        }
+
+        .brand-text {
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+        }
+
+        @keyframes float-neuron {
+            0%, 100% { transform: translateY(0px) rotate(0deg); }
+            50% { transform: translateY(-6px) rotate(8deg); }
+        }
+    </style>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+
+
+        const Icon = ({ name, className = "w-6 h-6" }) => {
+            const iconRef = useRef(null);
+            useEffect(() => {
+                if (window.lucide && iconRef.current) {
+                    iconRef.current.innerHTML = '';
+                    const iconEl = document.createElement('i');
+                    iconEl.setAttribute('data-lucide', name);
+                    iconEl.className = className;
+                    iconRef.current.appendChild(iconEl);
+                    window.lucide.createIcons();
+                }
+            }, [name, className]);
+            return <span ref={iconRef} className="inline-flex items-center justify-center"></span>;
+        };
+
+        const LatexFmt = ({ text }) => {
+            const containerRef = useRef(null);
+            useEffect(() => {
+                if (containerRef.current) {
+                    const raw = text.replace(/\$(.*?)\$/g, (match, p1) => {
+                        try { return katex.renderToString(p1, { throwOnError: false }); } catch (e) { return p1; }
+                    });
+                    containerRef.current.innerHTML = raw;
+                }
+            }, [text]);
+            return <div ref={containerRef} className="inline leading-relaxed" />;
+        };
+
+        function App() {
+            const [view, setView] = useState('home');
+            const [mode, setMode] = useState('normal');
+            const [score, setScore] = useState(0);
+            const [timeLeft, setTimeLeft] = useState(0);
+            const [lastScore, setLastScore] = useState(0);
+            const [isError, setIsError] = useState(false);
+            const [showInfo, setShowInfo] = useState(null);
+
+            // --- 数据迁移逻辑：确保 1.0 数据同步到 5.0 ---
+            const [history, setHistory] = useState(() => {
+                const v1DataRaw = localStorage.getItem('brain_train_pro_data');
+                const v2DataRaw = localStorage.getItem('brain_train_pro_v5');
+
+                let base = { bestScore: 0, bestCompScore: 0, isHardUnlocked: false };
+
+                // 如果有 2.0 数据，直接用
+                if (v2DataRaw) return JSON.parse(v2DataRaw);
+
+                // 如果没有 2.0 但有 1.0 数据，进行搬运
+                if (v1DataRaw) {
+                    const v1 = JSON.parse(v1DataRaw);
+                    base.bestScore = v1.bestScore || 0;
+                    base.isHardUnlocked = v1.isHardUnlocked || false;
+                }
+                return base;
+            });
+
+            // ==========================================
+            // ✨ 在这里插入：更新公告状态管理
+            // ==========================================
+            const [showUpdateNote, setShowUpdateNote] = useState(() => {
+                // 检查本地存储，如果这个版本的 Key 不存在，说明是第一次见，返回 true
+                return !localStorage.getItem('prefrontal_lab_v6.0_update');
+            });
+
+            const closeUpdateNote = () => {
+                // 玩家点击按钮后，在本地存入 'true'，下次刷新就不会再弹了
+                localStorage.setItem('prefrontal_lab_v6.0_update', 'true');
+                setShowUpdateNote(false);
+            };
+            // ==========================================
+
+            const TASK_DATA = {
+
+                schulte: {
+                    title: "舒尔特方格", en: "Schulte Grid", icon: "grid", color: "text-blue-500", time: 60,
+                    homeBasic: "专注力与视觉宽度", homeHard: "盲点模式 (不显示已选)",
+                    guide: {
+                        goal: "提升视觉搜索效率与专注力",
+                        play: `
+                <div class="space-y-4">
+                    <p class="text-slate-600 font-medium text-sm">按照数字 <span class="text-blue-600 font-bold">1 至 25</span> 的顺序，依次点击方格中的数字。</p>
+                    <div class="flex justify-center items-center gap-2 py-2">
+                        <div class="w-10 h-10 border-2 border-blue-500 rounded-xl flex items-center justify-center font-bold text-blue-600 bg-blue-50">1</div>
+                        <span class="text-slate-400">→</span>
+                        <div class="w-10 h-10 border-2 border-slate-200 rounded-xl flex items-center justify-center font-bold text-slate-400">2</div>
+                        <span class="text-slate-400">→</span>
+                        <div class="w-10 h-10 border-2 border-slate-200 rounded-xl flex items-center justify-center font-bold text-slate-400">3</div>
+                    </div>
+                    <div class="bg-blue-50/50 p-3 rounded-2xl border border-blue-100/50 text-[11px] text-slate-500">
+                        💡 <span class="font-bold">秘诀：</span>尽量保持视线中心在网格中央，利用<span class="font-bold text-blue-600">余光</span>捕捉周围数字。
+                    </div>
+                </div>`,
+                        playHard: `
+                <div class="space-y-4">
+                    <p class="text-slate-600 font-medium text-sm"><span class="text-amber-600 font-bold">⚠️ 进阶规则：</span>点过的数字会<span class="text-amber-600 font-bold">立即消失</span>。</p>
+                    <div class="bg-amber-50 p-4 rounded-3xl border border-amber-100 text-[11px] text-amber-700 leading-relaxed">
+                        这是“盲点”挑战。你需要记住哪些位置已经点过了，避免在空位上浪费视觉搜索时间！
+                    </div>
+                </div>`
+                    },
+                    effect: "增强视觉广度及快速信息处理能力。"
+                },
+                stroop: {
+                    title: "Stroop 干扰", en: "Stroop Test", icon: "palette", color: "text-rose-500", time: 60,
+                    homeBasic: "认知抑制控制", homeHard: "双重语义冲突",
+                    guide: {
+                        goal: "练习抑制本能反应的冲动",
+                        play: `
+                <div class="space-y-4">
+                    <p class="text-slate-600 font-medium text-sm">忽略文字含义，点击与文字 <span class="text-rose-600 font-bold">物理颜色</span> 相符的按钮。</p>
+                    <div class="bg-slate-50 p-4 rounded-3xl flex flex-col items-center border border-slate-100">
+                        <span class="text-2xl font-black text-blue-500 mb-2">红 色</span>
+                        <div class="flex gap-2">
+                            <div class="px-4 py-1.5 bg-rose-500 text-white text-[10px] font-bold rounded-full">点击红色 (❌)</div>
+                            <div class="px-4 py-1.5 bg-blue-500 text-white text-[10px] font-bold rounded-full">点击蓝色 (✅)</div>
+                        </div>
+                    </div>
+                    <div class="bg-rose-50/50 p-3 rounded-2xl border border-rose-100/50 text-[11px] text-slate-500">
+                        💡 <span class="font-bold text-rose-600">注意：</span>你的大脑会下意识想读字，请强制关注颜色本身！
+                    </div>
+                </div>`,
+                        playHard: `
+                <div class="space-y-4">
+                    <p class="text-slate-600 font-medium text-sm"><span class="text-rose-600 font-bold">⚠️ 进阶规则：</span>色块消失！改为点击对应的 <span class="text-rose-600 font-bold">文字内容</span>。</p>
+                    <div class="bg-rose-50 p-4 rounded-3xl border border-rose-100 text-[11px] text-rose-700 leading-relaxed">
+                        例：看到蓝色的“红”字，你必须在下方按钮中找出写着<span class="font-bold underline">“蓝”</span>字的那个。
+                    </div>
+                </div>`
+                    },
+                    effect: "锻炼反应抑制和选择性注意力。"
+                },
+                nback: {
+                    title: "N-Back 记忆", en: "N-Back Task", icon: "brain", color: "text-indigo-500", time: 60,
+                    homeBasic: "1-Back模式", homeHard: "2-Back 双重难度",
+                    guide: {
+                        goal: "训练大脑不断更新暂存信息的能力",
+                        play: `
+                <div class="space-y-4">
+                    <p class="text-slate-600 font-medium text-sm">判断当前数字，是否与 <span class="text-indigo-600 font-bold">前1步</span> 出现的数字相同。</p>
+                    <div class="bg-slate-50 p-4 rounded-3xl border border-slate-100 flex items-center justify-center gap-4">
+                        <div class="flex flex-col items-center gap-1 opacity-40">
+                            <div class="w-10 h-10 bg-white border rounded-xl flex items-center justify-center font-black">7</div>
+                            <span class="text-[8px] font-bold">前1步</span>
+                        </div>
+                        <div class="text-indigo-400 font-black animate-pulse">＝?</div>
+                        <div class="flex flex-col items-center gap-1">
+                            <div class="w-10 h-10 bg-indigo-500 rounded-xl flex items-center justify-center font-black text-white shadow-lg">7</div>
+                            <span class="text-[8px] font-bold text-indigo-600">当前</span>
+                        </div>
+                    </div>
+                    <div class="font-mono tracking-widest text-center py-1 bg-white rounded-lg border border-slate-100 text-[11px]">
+                        2 → 5 → <span class="bg-green-100 px-1 rounded text-green-700 font-bold">5</span>(点!)
+                    </div>
+                </div>`,
+                        playHard: `
+                <div class="space-y-4">
+                    <p class="text-slate-600 font-medium text-sm">判断当前数字，是否与 <span class="text-purple-600 font-bold">前第 2 步</span> 相同。</p>
+                    <div class="bg-slate-50 p-4 rounded-3xl border border-slate-100 flex justify-between items-center px-2">
+                        <div class="flex flex-col items-center gap-1">
+                            <div class="w-9 h-9 bg-purple-500 rounded-lg flex items-center justify-center font-black text-white">4</div>
+                            <span class="text-[8px] font-bold text-purple-600">对比项</span>
+                        </div>
+                        <div class="w-4 h-[1px] bg-slate-200"></div>
+                        <div class="opacity-20 flex flex-col items-center gap-1">
+                            <div class="w-9 h-9 bg-white border rounded-lg flex items-center justify-center font-black">9</div>
+                            <span class="text-[8px]">跳过</span>
+                        </div>
+                        <div class="w-4 h-[1px] bg-slate-200"></div>
+                        <div class="flex flex-col items-center gap-1">
+                            <div class="w-9 h-9 bg-purple-500 rounded-lg flex items-center justify-center font-black text-white ring-4 ring-purple-100">4</div>
+                            <span class="text-[8px] font-bold text-purple-600">当前</span>
+                        </div>
+                    </div>
+                    <p class="text-[10px] text-center text-slate-400">间隔一个数字，相同即点！</p>
+                </div>`
+                    },
+                    effect: "提升流体智力和工作记忆容量。"
+                },
+                setgame: {
+                    title: "SET 逻辑", en: "Set Logic", icon: "shapes", color: "text-green-500", time: 60,
+                    homeBasic: "逻辑处理", homeHard: "增加填充度维度",
+                    guide: {
+                        goal: "识别属性的全同与全异",
+                        play: `
+                <div class="space-y-4">
+                    <p class="text-slate-600 font-medium text-sm">找出 3 张牌，使它们的 <span class="text-indigo-600 font-bold">颜色</span> 和 <span class="text-indigo-600 font-bold">形状</span> 满足：</p>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="bg-slate-50 p-3 rounded-2xl flex flex-col items-center border">
+                            <div class="flex gap-1 mb-1"><div class="w-2.5 h-2.5 rounded-full bg-indigo-500"></div><div class="w-2.5 h-2.5 rounded-full bg-indigo-500"></div><div class="w-2.5 h-2.5 rounded-full bg-indigo-500"></div></div>
+                            <span class="text-[9px] font-bold text-slate-500 uppercase">全部相同</span>
+                        </div>
+                        <div class="bg-slate-50 p-3 rounded-2xl flex flex-col items-center border">
+                            <div class="flex gap-1 mb-1"><div class="w-2.5 h-2.5 rounded-full bg-red-400"></div><div class="w-2.5 h-2.5 rounded-full bg-blue-400"></div><div class="w-2.5 h-2.5 rounded-full bg-green-400"></div></div>
+                            <span class="text-[9px] font-bold text-slate-500 uppercase">全部不同</span>
+                        </div>
+                    </div>
+                    <div class="bg-indigo-50/50 p-2 rounded-xl border border-indigo-100/50 text-[10px] text-slate-500">
+                        💡 即使形状完全一样（三个圆），只要颜色互不相同（红/蓝/绿），也成立！
+                    </div>
+                </div>`,
+                        playHard: `
+                <div class="space-y-4">
+                    <p class="text-slate-600 font-medium text-[11px]">进阶模式下，<span class="text-green-600 font-bold">填充度</span> 也必须符合全同或全异原则。</p>
+                    <div class="bg-green-50 p-3 rounded-2xl border border-green-100 flex justify-center gap-2">
+                        <div class="w-6 h-6 rounded bg-green-500"></div>
+                        <div class="w-6 h-6 rounded bg-green-500 opacity-30"></div>
+                        <div class="w-6 h-6 rounded bg-green-500 opacity-10"></div>
+                    </div>
+                    <p class="text-[10px] text-center text-slate-400 tracking-tight">↑ 比如透明度“红/浅红/淡红”互不相同，成立 ✅</p>
+                </div>`
+                    },
+                    effect: "提升前额叶的并行逻辑处理能力。"
+                },
+                //5/11新加入
+                neuroncount: {
+                    title: "神经元计数", en: "Neuron Counting", icon: "binary", color: "text-amber-500", time: 60,
+                    homeBasic: "目标计数：圆圈", homeHard: "干扰物增加",
+                    guide: {
+                        goal: "在干扰中精确统计目标数量",
+                        play: `
+            <div class="space-y-4">
+                <p class="text-slate-600 font-medium text-sm">数出屏幕中 <span class="text-amber-600 font-bold">所有圆圈</span> 的数量。</p>
+                <div class="bg-slate-50 p-4 rounded-3xl flex flex-col items-center border">
+                    <div class="flex gap-2 mb-3">
+                        <div class="w-6 h-6 rounded-full bg-amber-500"></div>
+                        <div class="w-6 h-6 bg-slate-300"></div>
+                        <div class="w-6 h-6 rounded-full bg-amber-500"></div>
+                    </div>
+                    <p class="text-[10px] text-slate-400">默数到 2，然后点击按钮 2 次</p>
+                </div>
+            </div>`,
+                        playHard: `<p class="text-slate-600 font-medium text-sm">目标与干扰项形状极其相似，且数量大幅增加。</p>`
+                    }
+                },
+
+            };
+
+            const [schulte, setSchulte] = useState({ grid: [], next: 1 });
+            const [stroop, setStroop] = useState({ text: '', color: '', opts: [] });
+            const [nback, setNback] = useState({ current: null, isMatch: false });
+            const [setGame, setSetGame] = useState({ cards: [], selected: [] });
+            const [neuronCount, setNeuronCount] = useState({ items: [], target: {}, targetCount: 0, currentCount: 0 });
+            const nbackSeq = useRef([]);
+
+            const getFeedback = (s) => {
+                if (s <= 0) return { label: "实验室新人", sub: "别灰心，大脑正在热身！", color: "text-slate-400" };
+                if (s < 200) return { label: "初露锋芒", sub: "神经元开始活跃，继续保持。", color: "text-blue-500" };
+                if (s < 500) return { label: "脑力达人", sub: "专注力已经超过了 70% 的人！", color: "text-indigo-600" };
+                if (s < 800) return { label: "认知巅峰", sub: "极速反应！你的大脑放电非常快。", color: "text-purple-600" };
+                return { label: "前额叶战神", sub: "你的大脑结构可能异于常人！", color: "text-amber-600" };
+            };
+
+            const initGameCore = (type) => {
+                const isHard = mode === 'hard' || mode === 'comp';
+                if (type === 'schulte') {
+                    const nums = Array.from({ length: 25 }, (_, i) => i + 1).sort(() => Math.random() - 0.5);
+                    setSchulte({ grid: nums, next: 1 });
+                } else if (type === 'stroop') {
+                    const colors = [{ name: '红', val: '#EF4444' }, { name: '蓝', val: '#3B82F6' }, { name: '绿', val: '#10B981' }, { name: '黄', val: '#F59E0B' }];
+                    const t = Math.floor(Math.random() * 4);
+                    let c; do { c = Math.floor(Math.random() * 4); } while (c === t);
+                    setStroop({ text: colors[t].name, color: colors[c].val, opts: [...colors].sort(() => Math.random() - 0.5) });
+                } else if (type === 'nback') {
+                    const num = Math.floor(Math.random() * 9) + 1;
+                    nbackSeq.current.push(num);
+                    const match = nbackSeq.current.length > 2 && nbackSeq.current[nbackSeq.current.length - 1] === nbackSeq.current[nbackSeq.current.length - 3];
+                    setNback({ current: num, isMatch: match });
+                    // 在 initGameCore 的 setgame 分支中修改：
+                } else if (type === 'setgame') {
+                    const shapes = ['circle', 'square', 'triangle'];
+                    const colors = ['#EF4444', '#3B82F6', '#10B981'];
+                    const isHard = mode === 'hard' || mode === 'comp';
+
+                    // 逻辑判定：0代表全同，1代表全异
+                    const logic = {
+                        color: Math.floor(Math.random() * 2),
+                        shape: Math.floor(Math.random() * 2),
+                        fill: isHard ? Math.floor(Math.random() * 2) : 0 // 基础模式强制全同
+                    };
+
+                    // 强制至少有一个属性是“全异”，否则三张牌长得一模一样
+                    if (Object.values(logic).every(v => v === 0)) logic.shape = 1;
+
+                    // 1. 生成正确解 (3张)
+                    let solution = [];
+                    for (let i = 0; i < 3; i++) {
+                        solution.push({
+                            color: logic.color === 0 ? colors[0] : colors[i],
+                            shape: logic.shape === 0 ? shapes[0] : shapes[i],
+                            // 只有 true (全色) 和 false (半透)
+                            fill: logic.fill === 0 ? true : (i === 0 ? true : false) // 这里注意：两个分类无法实现“全异”，只能实现“全同”
+                        });
+                    }
+
+                    /** 
+                     * 逻辑修正：如果只有两个分类（全色/半透），在 3 张牌的情况下：
+                     * - “全同”是可以实现的（全是实心 或 全是半透）。
+                     * - “全异”逻辑上无法实现（因为只有两类，三张牌必有重复）。
+                     * 因此，填充度的逻辑将自动退化为：必须全同。
+                     **/
+                    if (logic.fill === 1 && isHard) {
+                        // 如果随机到了“全异”逻辑，由于只有两类，我们强制让解在填充度上“全同”但其他维度“全异”
+                        solution.forEach(s => s.fill = Math.random() > 0.5);
+                    }
+
+                    // 2. 生成干扰项 (6张)
+                    const fillers = Array.from({ length: 6 }, () => ({
+                        shape: shapes[Math.floor(Math.random() * 3)],
+                        color: colors[Math.floor(Math.random() * 3)],
+                        fill: isHard ? Math.random() > 0.5 : true
+                    }));
+
+                    const finalCards = [...solution, ...fillers]
+                        .sort(() => Math.random() - 0.5)
+                        .map((card, i) => ({ ...card, id: i }));
+
+                    setSetGame({ cards: finalCards, selected: [] });
+                } else if (type === 'neuroncount') {
+                    const isHard = mode === 'hard' || mode === 'comp';
+                    const shapes = ['circle', 'square', 'triangle'];
+                    const colors = ['bg-amber-500', 'bg-blue-500', 'bg-rose-500', 'bg-green-500', 'bg-purple-500'];
+
+                    const targetShape = shapes[Math.floor(Math.random() * shapes.length)];
+                    const targetColor = colors[Math.floor(Math.random() * colors.length)];
+
+                    const targetCount = isHard ? Math.floor(Math.random() * 6) + 7 : Math.floor(Math.random() * 4) + 4;
+                    const distractorCount = isHard ? Math.floor(Math.random() * 12) + 12 : Math.floor(Math.random() * 8) + 6;
+
+                    let items = [];
+                    for (let i = 0; i < targetCount; i++) {
+                        items.push({ id: `t_${i}`, shape: targetShape, color: targetColor, isTarget: true });
+                    }
+                    for (let i = 0; i < distractorCount; i++) {
+                        let dShape, dColor;
+                        do {
+                            dShape = shapes[Math.floor(Math.random() * shapes.length)];
+                            dColor = colors[Math.floor(Math.random() * colors.length)];
+                        } while (dShape === targetShape && dColor === targetColor);
+                        items.push({ id: `d_${i}`, shape: dShape, color: dColor, isTarget: false });
+                    }
+
+                    items = items.sort(() => Math.random() - 0.5);
+
+                    items = items.map(item => ({
+                        ...item,
+                        rotate: isHard ? Math.floor(Math.random() * 360) : 0,
+                        scale: isHard ? (Math.random() * 0.5 + 0.7) : 1
+                    }));
+
+                    setNeuronCount({ items, target: { shape: targetShape, color: targetColor }, targetCount, currentCount: 0 });
+                }
+            };
+
+            const switchArenaTask = () => {
+                const tasks = ['schulte', 'stroop', 'setgame', 'neuroncount', 'nback'];
+                const next = tasks[Math.floor(Math.random() * tasks.length)];
+                initGameCore(next);
+                setView(next);
+            };
+
+            const startChallenge = (type) => {
+                setScore(0);
+                nbackSeq.current = [];
+                if (mode === 'comp') {
+                    setTimeLeft(90);
+                    switchArenaTask();
+                } else {
+                    setTimeLeft(TASK_DATA[type].time);
+                    initGameCore(type);
+                    setView(type);
+                }
+            };
+
+            const handleArenaError = () => {
+                setIsError(true);
+                setTimeout(() => setIsError(false), 400);
+                if (mode === 'comp') setTimeLeft(prev => Math.max(0, prev - 5));
+            };
+
+            const endGame = (finalScoreOverride) => {
+                const currentFinalScore = typeof finalScoreOverride === 'number' ? finalScoreOverride : score;
+                setLastScore(currentFinalScore);
+
+                const isComp = mode === 'comp';
+
+                setHistory(prev => {
+                    // 计算新的最高分
+                    const newBestScore = isComp ? prev.bestScore : Math.max(prev.bestScore, currentFinalScore);
+                    const newBestCompScore = isComp ? Math.max(prev.bestCompScore || 0, currentFinalScore) : (prev.bestCompScore || 0);
+
+                    // 核心修复：解锁条件必须基于【更新后】的最高分，或者已经是解锁状态
+                    const hasReachedThreshold = newBestScore >= 500;
+                    const updatedUnlockStatus = prev.isHardUnlocked || hasReachedThreshold;
+
+                    const newHist = {
+                        ...prev,
+                        bestScore: newBestScore,
+                        bestCompScore: newBestCompScore,
+                        isHardUnlocked: updatedUnlockStatus
+                    };
+
+                    localStorage.setItem('brain_train_pro_v5', JSON.stringify(newHist));
+                    return newHist;
+                });
+
+                setView('result');
+                setTimeLeft(0);
+            };
+
+            useEffect(() => {
+                let timer;
+                if (!['home', 'result'].includes(view) && timeLeft > 0) {
+                    timer = setInterval(() => setTimeLeft(t => t - 1), 1000);
+                } else if (timeLeft === 0 && !['home', 'result'].includes(view)) {
+                    endGame();
+                }
+                return () => clearInterval(timer);
+            }, [timeLeft, view]);
+
+            return (
+                <div className={`h-full flex flex-col transition-colors duration-200 ${isError ? 'arena-flash' : 'bg-slate-50'} text-slate-900 select-none`}>
+
+                    {view === 'home' && (
+                        <div className="p-6 pt-10 flex flex-col items-center h-full overflow-y-auto no-scrollbar">
+                            <div className="text-center mb-8 shrink-0">
+                                <div className="inline-flex items-center justify-center w-14 h-14 bg-indigo-600 text-white rounded-2xl mb-4 shadow-xl"><Icon name="brain-circuit" /></div>
+                                <h1 className="text-2xl font-black text-slate-800 mb-0.5">前额叶实验室 6.0</h1>
+                                <div className="text-[10px] font-bold text-slate-400 brand-text">Prefrontal Lab</div>
+                            </div>
+
+                            <div className={`w-full max-w-sm p-6 rounded-[2.2rem] text-white mb-6 shadow-lg flex justify-between items-end relative overflow-hidden shrink-0 ${mode === 'comp' ? 'bg-amber-500' : 'bg-indigo-600'}`}>
+                                <div className="z-10">
+                                    <div className="text-[10px] opacity-60 font-bold uppercase tracking-widest">历史最高 (已同步)</div>
+                                    <div className="text-4xl font-black">{mode === 'comp' ? (history.bestCompScore || 0) : (history.bestScore || 0)}</div>
+                                </div>
+                                <div className="z-10 text-[10px] font-bold bg-black/20 px-3 py-1.5 rounded-full backdrop-blur-md">
+                                    {history.isHardUnlocked ? "🔓 Advanced On" : "🔒 500 Unlock"}
+                                </div>
+                                <div className="absolute top-[-20px] right-[-20px] opacity-10 rotate-12"><Icon name="brain" className="w-32 h-32" /></div>
+                            </div>
+
+                            <div className="flex w-full max-w-sm bg-slate-200 p-1 rounded-2xl mb-8 shrink-0">
+                                {['normal', 'hard', 'comp'].map(m => {
+                                    // 增加一个判定：如果是 hard 模式且没解锁，该按钮不可点（或者点不动）
+                                    const isLocked = m === 'hard' && !history.isHardUnlocked;
+
+                                    return (
+                                        <button
+                                            key={m}
+                                            onClick={() => {
+                                                if (isLocked) return; // 拦截点击
+                                                setMode(m);
+                                            }}
+                                            className={`flex-1 py-3 rounded-xl text-[10px] font-bold transition-all 
+                                        ${isLocked ? 'opacity-30 cursor-not-allowed' : ''} 
+                                        ${mode === m ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}
+                                        >
+                                            {m === 'normal' ? '基础' : m === 'hard' ? (isLocked ? '🔒 进阶' : '进阶') : '竞技'}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+
+                            <div className="w-full max-w-sm mb-12 shrink-0">
+                                {mode === 'comp' ? (
+                                    <div onClick={() => startChallenge()} className="flex items-center p-5 bg-white rounded-[1.8rem] border-2 border-amber-100 shadow-md active:scale-[0.98] transition-transform cursor-pointer">
+                                        <div className="w-12 h-12 rounded-xl flex items-center justify-center mr-4 bg-amber-50 text-amber-500">
+                                            <Icon name="zap" className="w-7 h-7" />
+                                        </div>
+                                        <div className="flex-1">
+                                            <div className="font-bold text-lg text-slate-800">全能认知竞技场</div>
+                                            <div className="text-[11px] text-slate-500 font-medium">混合：舒尔特方格 / Stroop反应 / 快速SET / N-Back / 神经元计数</div>
+                                        </div>
+                                        <Icon name="swords" className="w-5 h-5 text-amber-300" />
+                                    </div>
+                                ) : (
+                                    <div className="grid gap-3">
+                                        {Object.keys(TASK_DATA).map(type => (
+                                            <div key={type} className="flex items-center p-5 bg-white rounded-[1.8rem] border border-slate-100 shadow-sm active:scale-[0.98] transition-transform">
+                                                <div onClick={() => startChallenge(type)} className="flex items-center flex-1 cursor-pointer">
+                                                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center mr-4 bg-slate-50 ${TASK_DATA[type].color}`}>
+                                                        <Icon name={TASK_DATA[type].icon} />
+                                                    </div>
+                                                    <div>
+                                                        <div className="font-bold text-base text-slate-800">{TASK_DATA[type].title}</div>
+                                                        <div className="text-[11px] text-slate-500 font-medium">{mode === 'normal' ? TASK_DATA[type].homeBasic : TASK_DATA[type].homeHard}</div>
+                                                    </div>
+                                                </div>
+                                                <button onClick={() => setShowInfo(type)} className="p-2 ml-2 text-slate-300"><Icon name="info" className="w-5 h-5" /></button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* 更新说明弹窗 */}
+                    {showUpdateNote && (
+                        <div className="fixed inset-0 z-[110] flex items-center justify-center p-6 backdrop-blur-xl bg-slate-900/60 animate-in fade-in duration-300">
+                            <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl animate-pop-center relative overflow-hidden">
+                                {/* 背景装饰图层 */}
+                                <div className="absolute top-0 right-0 p-4 opacity-5">
+                                    <Icon name="wrench" className="w-20 h-20" />
+                                </div>
+
+                                <div className="flex items-center gap-3 mb-6">
+                                    <div className="w-10 h-10 bg-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center">
+                                        <Icon name="rocket" className="w-6 h-6" />
+                                    </div>
+                                    <div>
+                                        <h2 className="text-lg font-black text-slate-800">实验室更新公告</h2>
+                                        <p className="text-[10px] font-bold text-slate-400 tracking-widest uppercase">Version 6.0 Patch</p>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-4 mb-8">
+                                    {[
+                                        "✨【当当当当】全新的『神经元计数』小游戏闪亮登场啦，快来数数你的脑细胞吧！👀",
+                                        "⚔️【竞技大扩充】全能认知竞技场正式加入“神经元计数”，集齐五大挑战，准备好挑战大脑极限了吗！🔥",
+                                        "📱【贴心小优化】悄悄为你调整了各种屏幕设备的显示，现在怎么看都超级清晰，再也不会被截断啦！🥳"
+                                    ].map((text, i) => (
+                                        <div key={i} className="flex items-start gap-3">
+                                            <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-indigo-500 flex-shrink-0" />
+                                            <p className="text-sm text-slate-600 font-medium leading-relaxed">{text}</p>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                <button
+                                    onClick={closeUpdateNote}
+                                    className="w-full py-4 bg-slate-900 text-white rounded-2xl font-bold shadow-lg active:scale-95 transition-transform"
+                                >
+                                    知道了，这就去练脑
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {showInfo && (
+                        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 backdrop-blur-md bg-slate-900/40" onClick={() => setShowInfo(null)}>
+                            <div className="bg-white w-full max-w-xs rounded-[2.8rem] p-8 relative animate-pop-center" onClick={e => e.stopPropagation()}>
+                                <div className={`w-14 h-14 rounded-2xl bg-slate-50 flex items-center justify-center mb-6 ${TASK_DATA[showInfo].color}`}><Icon name={TASK_DATA[showInfo].icon} className="w-7 h-7" /></div>
+                                <h2 className="text-xl font-black mb-1">{TASK_DATA[showInfo].title}</h2>
+                                <div className="text-[9px] font-bold text-slate-400 brand-text mb-6">{TASK_DATA[showInfo].en}</div>
+                                <div className="text-xs text-slate-600 leading-relaxed font-medium mb-8"><LatexFmt text={
+                                    (mode === 'hard' || mode === 'comp')
+                                        ? (TASK_DATA[showInfo].guide.playHard || TASK_DATA[showInfo].guide.play)
+                                        : TASK_DATA[showInfo].guide.play
+                                } /></div>
+                                <button onClick={() => { startChallenge(showInfo); setShowInfo(null); }} className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold shadow-lg">开始训练</button>
+                            </div>
+                        </div>
+                    )}
+
+                    {!['home', 'result'].includes(view) && (
+                        <div className="flex-1 flex flex-col">
+                            <div className="h-14 px-4 flex-shrink-0 flex justify-between items-center bg-white border-b border-slate-100">
+                                <button onClick={() => setView('home')} className="p-2 text-slate-400"><Icon name="chevron-left" /></button>
+                                <div className="text-center">
+                                    <div className="text-[9px] font-black text-indigo-500 brand-text">{mode === 'comp' ? 'ARENA MODE' : 'TRAINING'}</div>
+                                    <div className="text-sm font-bold">{mode === 'comp' ? '全能竞技' : TASK_DATA[view]?.title}</div>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    <div className={`text-xs font-mono font-bold px-2 py-1 rounded ${isError ? 'bg-red-500 text-white' : 'bg-slate-100'}`}>{timeLeft}s</div>
+                                    <div className="font-mono text-xl font-black text-indigo-600">{score}</div>
+                                </div>
+                            </div>
+                            <div className="flex-1 flex items-center justify-center p-6">
+                                {view === 'schulte' && (
+                                    <div className="grid grid-cols-5 gap-1.5 w-full max-w-sm aspect-square">
+                                        {schulte.grid.map(n => {
+                                            // 核心逻辑：判断当前格子的状态
+                                            const isClicked = n < schulte.next; // 是否已经点过了
+                                            const isHardMode = mode === 'hard' || mode === 'comp'; // 是否是进阶或竞技模式
+
+                                            return (
+                                                <button
+                                                    key={n}
+                                                    onClick={() => {
+                                                        // 只有点击“下一个正确数字”时才触发逻辑
+                                                        if (n === schulte.next) {
+                                                            if (n === 25) {
+                                                                const finalScore = score + 10 + (timeLeft * 10);
+                                                                setScore(finalScore);
+                                                                mode === 'comp' ? switchArenaTask() : endGame(finalScore);
+                                                            } else {
+                                                                setSchulte(p => ({ ...p, next: p.next + 1 }));
+                                                                setScore(s => s + 10);
+                                                            }
+                                                        } else {
+                                                            handleArenaError(); // 点错了闪红光
+                                                        }
+                                                    }}
+                                                    className={`flex items-center justify-center font-bold text-lg rounded-lg border transition-all 
+    ${(n < schulte.next && mode === 'hard') // ← 这里去掉了 mode === 'comp'
+                                                            ? 'bg-white text-slate-900 border-slate-100 shadow-sm' // 只有进阶模式是“盲点”
+                                                            : (n < schulte.next
+                                                                ? 'bg-indigo-600 text-white opacity-20 border-transparent' // 竞技和基础模式：点过变蓝透明
+                                                                : 'bg-white text-slate-900 border-slate-100 shadow-sm'
+                                                            )
+                                                        }`}
+                                                >
+                                                    {n}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                                {view === 'stroop' && (
+                                    <div className="flex flex-col items-center space-y-12 w-full">
+                                        <div className="text-7xl font-black" style={{ color: stroop.color }}>{stroop.text}</div>
+                                        <div className="grid grid-cols-2 gap-3 w-full max-w-sm">
+                                            {stroop.opts.map(o => (
+                                                <button key={o.val} onClick={() => {
+                                                    if (o.val === stroop.color) { setScore(s => s + 30); mode === 'comp' ? switchArenaTask() : initGameCore('stroop'); }
+                                                    else handleArenaError();
+                                                }} className="py-6 bg-white rounded-2xl border border-slate-100 font-bold shadow-sm">{mode === 'normal' ? <div className="w-8 h-8 rounded-full mx-auto" style={{ backgroundColor: o.val }}></div> : o.name}</button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                                {view === 'nback' && (
+                                    <div className="flex flex-col items-center w-full">
+                                        <div className="w-24 h-24 bg-white rounded-3xl shadow-xl flex items-center justify-center text-4xl font-black text-indigo-600 mb-12 border border-slate-100">{nback.current}</div>
+                                        <div className="grid grid-cols-2 gap-4 w-full max-w-xs">
+                                            <button onClick={() => {
+                                                if (nback.isMatch) { setScore(s => s + 50); mode === 'comp' ? switchArenaTask() : initGameCore('nback'); }
+                                                else handleArenaError();
+                                            }} className="py-5 bg-indigo-600 text-white rounded-2xl font-bold shadow-lg">匹配</button>
+                                            <button onClick={() => {
+                                                if (!nback.isMatch) { setScore(s => s + 20); mode === 'comp' ? switchArenaTask() : initGameCore('nback'); }
+                                                else handleArenaError();
+                                            }} className="py-5 bg-slate-200 text-slate-600 rounded-2xl font-bold">不同</button>
+                                        </div>
+                                    </div>
+                                )}
+                                {view === 'setgame' && (
+                                    <div className="flex flex-col items-center w-full animate-pop-center">
+                                        {/* --- 逻辑模型视觉提示栏 --- */}
+                                        <div className="mb-6 w-full max-w-sm p-4 bg-white border border-slate-100 rounded-[2rem] shadow-sm">
+                                            <div className="flex items-center justify-between mb-3 px-1">
+                                                <span className="text-[10px] font-black text-indigo-500 brand-text tracking-widest">LOGIC MODEL</span>
+                                                <span className="text-[10px] font-bold text-slate-400">颜色 / 形状均需符合：</span>
+                                            </div>
+
+                                            <div className="grid grid-cols-2 gap-3">
+                                                {/* 模型 A: 全同 */}
+                                                <div className="bg-slate-50 rounded-2xl p-2 flex flex-col items-center">
+                                                    <div className="flex gap-1 mb-1">
+                                                        <div className="w-3 h-3 rounded-full bg-indigo-500"></div>
+                                                        <div className="w-3 h-3 rounded-full bg-indigo-500"></div>
+                                                        <div className="w-3 h-3 rounded-full bg-indigo-500"></div>
+                                                    </div>
+                                                    <span className="text-[9px] font-black text-slate-500">全部相同 (SAME)</span>
+                                                </div>
+
+                                                {/* 模型 B: 全异 */}
+                                                <div className="bg-slate-50 rounded-2xl p-2 flex flex-col items-center">
+                                                    <div className="flex gap-1 mb-1">
+                                                        <div className="w-3 h-3 rounded-full bg-red-400"></div>
+                                                        <div className="w-3 h-3 rounded-full bg-blue-400"></div>
+                                                        <div className="w-3 h-3 rounded-full bg-green-400"></div>
+                                                    </div>
+                                                    <span className="text-[9px] font-black text-slate-500">全部不同 (DIFF)</span>
+                                                </div>
+                                            </div>
+                                            <div className="mt-2 text-center">
+                                                <p className="text-[8px] text-slate-400 font-medium">例：三个圆圈(同) + 三种颜色(异) = 成立 ✅</p>
+                                            </div>
+                                        </div>
+
+                                        {/* --- 游戏网格 --- */}
+                                        <div className="grid grid-cols-3 gap-2 w-full max-w-sm">
+                                            {setGame.cards.map(card => (
+                                                <button
+                                                    key={card.id}
+                                                    onClick={() => {
+                                                        const newSel = setGame.selected.includes(card.id) ? setGame.selected.filter(id => id !== card.id) : [...setGame.selected, card.id];
+                                                        if (newSel.length === 3) {
+                                                            const selectedCards = newSel.map(id => setGame.cards.find(c => c.id === id));
+
+                                                            // 核心判定逻辑：全同 或 全异
+                                                            const checkProp = (p1, p2, p3) => (p1 === p2 && p2 === p3) || (p1 !== p2 && p2 !== p3 && p1 !== p3);
+
+                                                            const isColorMatch = checkProp(selectedCards[0].color, selectedCards[1].color, selectedCards[2].color);
+                                                            const isShapeMatch = checkProp(selectedCards[0].shape, selectedCards[1].shape, selectedCards[2].shape);
+                                                            const isFillMatch = checkProp(selectedCards[0].fill, selectedCards[1].fill, selectedCards[2].fill);
+
+                                                            if (isColorMatch && isShapeMatch && isFillMatch) {
+                                                                setScore(s => s + 100);
+                                                                mode === 'comp' ? switchArenaTask() : initGameCore('setgame');
+                                                            } else {
+                                                                handleArenaError();
+                                                                setSetGame(p => ({ ...p, selected: [] }));
+                                                            }
+                                                        } else {
+                                                            setSetGame(p => ({ ...p, selected: newSel }));
+                                                        }
+                                                    }}
+                                                    className={`aspect-square rounded-3xl border-2 flex items-center justify-center transition-all duration-200 ${setGame.selected.includes(card.id)
+                                                        ? 'border-indigo-500 bg-indigo-50 shadow-md scale-95'
+                                                        : 'border-slate-100 bg-white shadow-sm'
+                                                        }`}
+                                                >
+                                                    <div style={{ color: card.color }} className={card.fill ? 'opacity-100' : 'opacity-30'}>
+                                                        <Icon name={card.shape} className="w-10 h-10" />
+                                                    </div>
+                                                </button>
+                                            ))}
+                                        </div>
+
+                                        {/* --- 新增：无惩罚刷新按钮 --- */}
+                                        <button
+                                            onClick={() => initGameCore('setgame')}
+                                            className="flex items-center gap-2 mt-4 px-8 py-3 bg-white border border-slate-200 text-slate-400 rounded-2xl text-xs font-bold active:scale-95 transition-all shadow-sm"
+                                        >
+                                            <Icon name="refresh-cw" className="w-3.5 h-3.5" />
+                                            找不到？换一批
+                                        </button>
+
+                                    </div>
+                                )}
+                                {view === 'neuroncount' && (
+                                    <div className="flex flex-col items-center w-full animate-pop-center h-full max-h-full min-h-0">
+                                        <div className="flex-shrink-0 w-full max-w-sm mb-3 bg-white px-5 py-3 rounded-[1.5rem] border border-slate-100 shadow-sm flex items-center justify-center gap-3">
+                                            <span className="text-sm font-bold text-slate-600">请数出所有的</span>
+                                            <div
+                                                className={`w-5 h-5 ${neuronCount.target.color}`}
+                                                style={{
+                                                    ...(neuronCount.target.shape === 'circle' ? { borderRadius: '50%' } :
+                                                        neuronCount.target.shape === 'triangle' ? { clipPath: 'polygon(50% 0%, 0% 100%, 100% 100%)' } :
+                                                            { borderRadius: '0.25rem' }),
+                                                }}
+                                            ></div>
+                                        </div>
+
+                                        <div className="flex-1 w-full max-w-sm bg-white rounded-[2rem] border border-slate-100 shadow-inner p-4 relative overflow-y-auto min-h-0 flex flex-wrap content-start justify-center gap-3">
+                                            {neuronCount.items.map((item, index) => (
+                                                <div key={item.id}
+                                                    style={{
+                                                        transform: `rotate(${item.rotate}deg) scale(${item.scale})`,
+                                                        ...(item.shape === 'circle' ? { borderRadius: '50%' } :
+                                                            item.shape === 'triangle' ? { clipPath: 'polygon(50% 0%, 0% 100%, 100% 100%)' } :
+                                                                { borderRadius: '0.25rem' }),
+                                                        animation: `float-neuron ${2.5 + (index % 4)}s ease-in-out infinite alternate`,
+                                                        animationDelay: `${(index % 5) * 0.15}s`
+                                                    }}
+                                                    className={`w-7 h-7 ${item.color} shadow-sm`}
+                                                ></div>
+                                            ))}
+                                        </div>
+
+                                        <div className="flex-shrink-0 w-full max-w-sm mt-3 flex flex-col gap-2">
+                                            <div className="flex gap-2">
+                                                <div className="flex-1 bg-white p-2 rounded-[1.5rem] border border-slate-100 shadow-sm flex flex-col items-center justify-center">
+                                                    <div className="text-[10px] text-slate-400 font-bold">已记录数量</div>
+                                                    <div className="text-3xl font-black text-amber-500 font-mono leading-none">{neuronCount.currentCount}</div>
+                                                </div>
+                                                <button
+                                                    onClick={() => setNeuronCount(p => ({ ...p, currentCount: p.currentCount + 1 }))}
+                                                    className="flex-[2] h-16 bg-amber-500 text-white rounded-[1.5rem] font-bold shadow-md active:scale-95 transition-transform flex items-center justify-center gap-2"
+                                                >
+                                                    <Icon name="plus" className="w-6 h-6" /> <span className="text-lg">记数</span>
+                                                </button>
+                                            </div>
+
+                                            <div className="flex gap-2">
+                                                <button
+                                                    onClick={() => setNeuronCount(p => ({ ...p, currentCount: Math.max(0, p.currentCount - 1) }))}
+                                                    className="flex-1 h-12 bg-white text-slate-500 rounded-[1.2rem] font-bold border border-slate-100 shadow-sm active:scale-95 transition-transform flex items-center justify-center gap-1 text-xs"
+                                                >
+                                                    <Icon name="rotate-ccw" className="w-4 h-4" /> 撤销
+                                                </button>
+                                                <button
+                                                    onClick={() => {
+                                                        if (neuronCount.currentCount === neuronCount.targetCount) {
+                                                            setScore(s => s + 80);
+                                                            mode === 'comp' ? switchArenaTask() : initGameCore('neuroncount');
+                                                        } else {
+                                                            handleArenaError();
+                                                            setNeuronCount(p => ({ ...p, currentCount: 0 }));
+                                                        }
+                                                    }}
+                                                    className="flex-[2] h-12 bg-slate-900 text-white rounded-[1.2rem] font-bold shadow-md active:scale-95 transition-transform flex items-center justify-center gap-1 text-sm"
+                                                >
+                                                    <Icon name="check" className="w-5 h-5" /> 确认提交
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {view === 'result' && (() => {
+                        const feedback = getFeedback(lastScore);
+                        return (
+                            <div className="flex-1 flex flex-col items-center justify-center px-8 text-center animate-pop-center">
+                                <div className="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center mb-6 text-indigo-500 shadow-sm"><Icon name="sparkles" className="w-10 h-10" /></div>
+                                <div className="text-[10px] font-black brand-text text-slate-400 mb-1">测试结束 - 最终得分</div>
+                                <div className="text-6xl font-black text-indigo-600 mb-6 font-mono">{lastScore}</div>
+                                <div className={`text-xl font-black mb-1 ${feedback.color}`}>{feedback.label}</div>
+                                <div className="text-xs text-slate-500 mb-12 font-medium leading-relaxed max-w-[200px]">{feedback.sub}</div>
+                                <button onClick={() => setView('home')} className="w-full max-w-sm py-4 bg-slate-900 text-white rounded-2xl font-bold shadow-lg">返回大厅</button>
+                            </div>
+                        );
+                    })()}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+
+</html>
